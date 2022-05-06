@@ -17,10 +17,11 @@ vs:
 	ADDON_DLLS_TO_COPY += "C:/lib/OpenCV455/x64/vc16/bin/opencv_world455.dll"
 
     # libtorch
+    ADDON_INCLUDES += "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/include"
+
     # Release
     ADDON_INCLUDES += "libs/win/include/vs/x64/Release"
     ADDON_INCLUDES += "libs/win/include/vs/x64/Release/torch/csrc/api/include"
-    ADDON_INCLUDES += "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.3/include"
     # Debug
     # ADDON_INCLUDES += "libs/win/include/vs/x64/Debug"
     # ADDON_INCLUDES += "libs/win/include/vs/x64/Debug/torch/csrc/api/include"

@@ -19,7 +19,7 @@ example-vive/*
 !example-vive/src
 !example-vive/addons.make
 
-pytorch_model_export/*
-!pytorch_model_export/model_export.py
-!pytorch_model_export/my_Inception_v3.py
-!pytorch_model_export/spyNet.py
+python/*
+!python/model_export.py
+!python/my_Inception_v3.py
+!python/spyNet.py
