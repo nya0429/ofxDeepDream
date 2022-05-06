@@ -1,5 +1,11 @@
 model/*
+!model/.gitkeep
+
 libs/*
+!libs/win/include/vs/x64/Debug/.gitkeep
+!libs/win/include/vs/x64/Release/.gitkeep
+!libs/win/lib/vs/x64/Debug/.gitkeep
+!libs/win/lib/vs/x64/Release/.gitkeep
 
 example-image/*
 !example-image/src
