@@ -30,7 +30,7 @@ OpenCV
 You don't have to follow the above method, just set up your project to use OpenCV and Libtorch.
 
 Models
-1. Download models from [this drive](https://drive.google.com/drive/folders/1UvaghH4AWgQjkSvTMXK-AkwkVBBJdGyZ?usp=sharing) or run /pytorch_model_export/model_export.py in Pytorch.
+1. Download models from [this drive](https://drive.google.com/drive/folders/1UvaghH4AWgQjkSvTMXK-AkwkVBBJdGyZ?usp=sharing) or run /python/model_export.py in Pytorch.
 2. Copy Inception_v3.pt and spynet.pt to the /model directory.
 
 
