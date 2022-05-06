@@ -8,7 +8,6 @@
 #include <opencv2/cudaoptflow.hpp>
 #include <opencv2/cudaarithm.hpp>
 #include <math.h>
-#include "ofxSpout.h"
 
 namespace F = torch::nn::functional;
 
@@ -18,35 +17,33 @@ namespace ofxDeepDream {
 
 	public:
 		SpynetOpticalFlowModule() {
-
 			try {
 				ofFilePath  file;
-				auto path = file.getAbsolutePath("spynet.pt");
-				//auto path = "D:/Users/nagai/Documents/python/realtime-deepdream/spynet.pt";
+				auto path = file.getAbsolutePath("../../../../../addons/ofxDeepDream/model/spynet.pt");
+				ofLogNotice(__FUNCTION__) << "load model : " << path;
+
 				spynet = torch::jit::load(path, torch::kCUDA);
 				spynet.eval();
 				spynet.train(false);
 				for (auto& param : spynet.parameters()) {
 					param.set_requires_grad(false);
 				};
-				//spynet.dump(true, false, false);
-				ofLogNotice(__FUNCTION__) << "load model :" << path;
 			}
 			catch (const c10::Error& e) {
-				ofLogError(__FUNCTION__) << "error loading the model";
+				ofLogError(__FUNCTION__) << e.what();
 			}		
 		
 		}
 
 		void setup(cv::cuda::GpuMat& gpuMat) {
-
 			createWarpGrid(gpuMat.size());
 			prevTensor = preprocess(gpuMat);
-			auto size = prevTensor.sizes();
+			c10::IntArrayRef size = prevTensor.sizes();
 			int org_h = size[2];
 			int org_w = size[3];
-			int half_h = org_h / 4;
-			int half_w = org_w / 4;
+			int scale = pow(2, int(sizeFlag));
+			int half_h = org_h / scale;
+			int half_w = org_w / scale;
 			int w = int(floor(ceil(half_w / 32.0) * 32.0));
 			int h = int(floor(ceil(half_h / 32.0) * 32.0));
 			PreprocessedSize = std::vector<int64_t>({ h,w });
@@ -57,9 +54,7 @@ namespace ofxDeepDream {
 			resizeValue = std::vector<float>({ resizeWidth, resizeHeight });
 			flow = cv::cuda::GpuMat(gpuMat.size(),CV_32FC2);
 			outputTensor = preprocess(flow);
-
-			ofLogNotice(__FUNCTION__) << "process size w:" << w << " h:" << h;
-
+			ofLogNotice(__FUNCTION__, "spynet process size (%d,%d)", w, h);
 		}
 
 		auto& get_flow() {
@@ -77,7 +72,15 @@ namespace ofxDeepDream {
 			prevTensor.data().copy_(tensor);
 		}
 
+		enum class size {
+			full = 0,
+			half = 1,
+			quarter = 2,
+		};
+
 	protected:
+
+		size sizeFlag = size::quarter;
 
 		torch::Tensor preprocess(cv::cuda::GpuMat& gpuMat) {
 			std::vector<int64_t> dims = { 1, gpuMat.channels(), gpuMat.rows, gpuMat.cols };

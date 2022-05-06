@@ -24,50 +24,39 @@ namespace ofxDeepDream {
 
 			try {
 				ofFilePath  file;
-				//auto path = file.getAbsolutePath("my_Inception_v3.pt");
-				//auto path = "D:/Users/nagai/Documents/openframeworks/of_v0.11.2_vs2017_release/addons/ofxDeepDream/model/my_Inception_v3_test.pt";
-				auto path = "D:/Users/nagai/Documents/python/realtime-deepdream/my_Inception_v3_1118.pt";
-				
+				auto path = file.getAbsolutePath("../../../../../addons/ofxDeepDream/model/Inception_v3.pt");
+				ofLogNotice(__FUNCTION__) << "load model :" << path;
 				model = torch::jit::load(path, torch::kCUDA);
-
-				//model.dump(true,false,false);
 				model.eval();
 				model.train(false);
 				for (auto& param : model.parameters()) {
 					param.set_requires_grad(false);
 				};
-				ofLogNotice(__FUNCTION__) << "load model :"<< path;
 			}
 			catch (const c10::Error& e) {
-				ofLogError(__FUNCTION__) << "error loading the model";
+				ofLogError(__FUNCTION__) << e.msg() << "\n" << e.what();
 			}
 
 			group.setName("DeepDreamModule");
-
-			group.add(layerLevel.set("layerlevel", 4, 0, 4));
-
+			group.add(layerLevel.set("layerlevel", init_layer, 0, 4));
 			group.add(norm_str.set("norm_str", init_norm_str, 1, 4));
 			group.add(lr.set("lr", init_lr, 0.005, 0.1));
 			group.add(_octave_scale.set("octave_scale", init_oc_scale, 1.1, 1.7));
-			group.add(_global_octave_num.set("octave_num", init_oc_num, 2, 7));
-			group.add(_num_iterations.set("iteration", init_itr, 1, 10));
-
-			group.add(isRandomLr.set("randomLr", false));
-			group.add(isRandomOctarveScale.set("randomScale", false));
-
+			group.add(_global_octave_num.set("octave_num", init_oc_num, 1, 20));
+			group.add(_num_iterations.set("iteration", init_itr, 1, 20));
+			group.add(straddle_scaleing.set("straddle_scaleing", true));
 		}
 
 		const float init_lr = 0.009;
-		const float init_norm_str = 3;
+		const float init_norm_str = 1.2;
 		const float init_oc_scale = 1.2;
-		const int init_oc_num = 5;
-		const int init_itr = 5;
+		const int init_oc_num = 20;
+		const int init_itr = 20;
 		const int init_layer = 4;
 
 		~DeepDreamModuleThread() {
 			stop();
 			waitForThread(false,1000);
-			ofLogNotice() << "destructor end";
 		}
 
 		enum class status {
@@ -83,6 +72,7 @@ namespace ofxDeepDream {
 			resultTensor = resultTensor.squeeze().permute({ 1, 2, 0 });
 			start();
 		}
+
 		void start() {
 			startThread();
 			ofLogNotice(__FUNCTION__) << "Thread start.";
@@ -93,14 +83,11 @@ namespace ofxDeepDream {
 			condition.notify_all();
 			ofLogNotice(__FUNCTION__) << "Thread stop.";
 		}
-
 		void exit() {
 			stop();
 			waitForThread(false,1000);
 			ofLogNotice(__FUNCTION__) << "Exit.";
-
 		}
-
 		void threadedFunction() {
 			while (isThreadRunning()) {
 				if (state == status::processing) {
@@ -139,9 +126,9 @@ namespace ofxDeepDream {
 					std::unique_lock<std::mutex> lock(mutex);
 
 					outputTensor = preprocess(output);
-					inputGpuMat.copyTo(cache);
 					outputTensor = outputTensor.squeeze().permute({ 1, 2, 0 });
 					outputTensor.data().copy_(resultTensor);
+					inputGpuMat.copyTo(cache);
 					state = status::wait_recieve;
 
 					condition.notify_all();
@@ -157,13 +144,23 @@ namespace ofxDeepDream {
 			catch (std::runtime_error e) { ofLogError(__FUNCTION__) << e.what(); }
 
 		}
-
 		ofParameterGroup& getParameters() { return group; }
 		int getThreadFrameNum() {
 			return threadFrameNum;
 		}
 
 		void dreamer(cv::cuda::GpuMat& input, cv::cuda::GpuMat& output) {
+
+			inputTensor = preprocess(input);
+			inputTensor = inputTensor.toType(tensor_datatype);
+			dreamer();
+			torch::Tensor outputTensor = preprocess(output);
+			outputTensor = outputTensor.squeeze().permute({ 1, 2, 0 });
+			outputTensor.data().copy_(resultTensor);
+
+		}
+
+		void thread_dreamer(cv::cuda::GpuMat& input, cv::cuda::GpuMat& output) {
 
 			std::unique_lock<std::mutex> lock(mutex);
 
@@ -178,40 +175,57 @@ namespace ofxDeepDream {
 			condition.notify_all();
 
 		}
-		
+
 	protected:
 
+		ofParameter<bool> straddle_scaleing;
 		status state = status::wait_recieve;
 		int threadFrameNum = 0;
 
 		void dreamer() {
+
 			resultTensor = inputTensor.clone();
 			resultTensor = dreamer(inputTensor);
 			resultTensor = deprocess(resultTensor);
+
 		}
+
 		torch::Tensor dreamer(torch::Tensor& x) {
 
-			global_octave_num = _global_octave_num;
-			num_iterations = _num_iterations;
-			global_num_iterations = _num_iterations;
-			layerDepthLevel = layerLevel.get();
-
-			//limited_tensor_size = _limited_tensor_size;
-			// 
 			if (isRandomOctarveScale) {
-				octave_scale = random_scale[rng.uniform(0, 5)];
+				_global_octave_num = random_scale[rng.uniform(0, 5)];
 			}
-			else {
-				octave_scale = _octave_scale;
+
+			global_octave_num = _global_octave_num;
+			global_num_iterations = _num_iterations;
+			if (global_octave_num < global_octave_iterator) {
+				global_octave_iterator = 0;
 			}
+			if (global_num_iterations < global_num_iterator) {
+				global_num_iterator = 0;
+			}
+
+			layerDepthLevel = layerLevel.get();
+			octave_scale = _octave_scale;
+
 			if (isRandomLr) {
 				lr.set(random_lr[rng.uniform(0, 5)]);
 			}
 
 			x = normalize.operator()(x);
-			//x = scaling(x);
-			x = loop_scaling2(x);
-			return x;
+
+			try {
+				if (straddle_scaleing) {
+					x = loop_scaling(x);
+				}
+				else {
+					x = scaling(x);
+				}
+				return x;
+			}
+			catch (const c10::Error& e) {
+				ofLogError(__FUNCTION__) << e.msg() << "\n" << e.what();
+			}
 		}
 		cv::cuda::GpuMat dreamer(cv::cuda::GpuMat& gpuMat) {
 
@@ -230,7 +244,6 @@ namespace ofxDeepDream {
 			tensor = deprocess(tensor);
 			blob_tensor = blob_tensor.squeeze().permute({ 1, 2, 0 });
 			blob_tensor.data().copy_(tensor);
-
 		}
 
 		torch::Tensor preprocess(cv::cuda::GpuMat& gpuMat) {
@@ -253,27 +266,15 @@ namespace ofxDeepDream {
 
 			tensor = tensor.detach().set_requires_grad(true);
 
-			//torch::jit::IValue iv = torch::jit::IValue(16);
-			//	torch::TensorOptions().dtype(tensor_datatype).device(torch::kCUDA)
-			//.dtype(tensor_datatype).device(torch::kCUDA)
-
-			auto test = torch::tensor(torch::IntArrayRef(25));
-			test.item();
-
-			torch::IValue my_ivalue(26);
-			my_ivalue = 1;
-
-
-			for (int i = 0; i < num_iterations; i++) {
-
+			for (int i = 0; i < global_num_iterations; i++) {
+				
 				std::vector<torch::jit::IValue> inputs;
 				inputs.push_back(tensor);
-				inputs.push_back(test);
+				inputs.push_back(layerDepthLevel);
+
 				auto out = model.forward(inputs).toTensor();
 				torch::Tensor loss = out.norm();
 				loss.backward();
-
-				//std::cout << "itr " << i << " loss " << loss.item() << std::endl;
 
 				auto avg_grad = torch::abs(tensor.grad()).mean().item().toFloat();
 				auto norm_lr = lr / avg_grad;
@@ -285,6 +286,7 @@ namespace ofxDeepDream {
 			};
 			return tensor;
 		}
+
 		torch::Tensor once_dreaming(torch::Tensor& tensor) {
 
 			tensor = tensor.detach().set_requires_grad(true);
@@ -292,12 +294,10 @@ namespace ofxDeepDream {
 			std::vector<torch::jit::IValue> inputs;
 			inputs.push_back(tensor);
 			inputs.push_back(layerDepthLevel);
-
 			auto out = model.forward(inputs).toTensor();
 			torch::Tensor loss = out.norm();
 			loss.backward();
 
-			//std::cout << " loss " << loss.item() << std::endl;
 			auto avg_grad = torch::abs(tensor.grad()).mean().item().toFloat();
 			auto norm_lr = lr / avg_grad;
 
@@ -310,46 +310,56 @@ namespace ofxDeepDream {
 
 		torch::Tensor scaling(torch::Tensor& x) {
 
-			torch::Tensor x_org = x;
-			torch::Tensor x_base;
+			try {
 
-			for (int ioct = 0; ioct < octave_num; ioct++) {
-
+				torch::Tensor x_org = x;
+				torch::Tensor x_base;
+				auto org_size = x_org.sizes();
 				auto size = x_org.sizes();
-				int i = int(pow(octave_scale, (octave_num - ioct - 1)));
-				int h = size[2] / i;
-				int w = size[3] / i;
-				x_base = torch::nn::AdaptiveAvgPool2d(torch::nn::AdaptiveAvgPool2dOptions({ h, w })).operator()(x_org);
 
-				if (ioct == 0) {
-					x = x_base;
-				}
-				else {
-					x = x_base + F::interpolate(x, interpOpt.size(std::vector<int64_t>({ h,w })));
+				for (int ioct = 0; ioct < global_octave_num; ioct++) {
+
+					int i = int(pow(octave_scale, (global_octave_num - ioct - 1)));
+					int h = org_size[2] / i;
+					int w = org_size[3] / i;
+					h = max(299, h);
+					w = max(299, w);
+					x_base = torch::nn::AdaptiveAvgPool2d(torch::nn::AdaptiveAvgPool2dOptions({ h, w })).operator()(x_org);
+				
+					ofLogVerbose(__FUNCTION__, "octave: %d/%d", ioct+1, global_octave_num);
+
+					if (ioct == 0) {
+						x = x_base;
+					}
+					else {
+						x = x_base + F::interpolate(x, interpOpt.size(std::vector<int64_t>({ h,w })));
+					}
+
+					x = dreaming(x);
+					x.set_data(x.data() - x_base);
+
 				}
 
-				x = dreaming(x);
-				x.set_data(x.data() - x_base);
+				x = x + x_base;
+				return x;
 
 			}
-
-			x = x + x_base;
-			return x;
-
+			catch (const c10::Error& e) {
+				ofLogError(__FUNCTION__) << e.msg() << "\n" << e.what();
+			}
 		}
-		torch::Tensor loop_scaling2(torch::Tensor& x) {
+
+		torch::Tensor loop_scaling(torch::Tensor& x) {
 
 			torch::Tensor x_org = x;
 			torch::Tensor x_base;
 			auto org_size = x_org.sizes();
 			auto size = x_org.sizes();
-
-			//https://tzmi.hatenablog.com/entry/2020/03/10/230850
-			//https://tzmi.hatenablog.com/entry/2019/12/30/220201
-
 			double i = pow(octave_scale, (global_octave_num - global_octave_iterator - 1));
-			//double i = pow(octave_scale, (global_octave_iterator));
-			//i = pow(octave_scale, global_octave_num - 1) - i + 1.0;
+			
+			ofLogVerbose(__FUNCTION__, "octave: %d/%d", global_octave_iterator + 1, global_octave_num);
+			ofLogVerbose(__FUNCTION__, "iter: %d/%d", global_num_iterator + 1, global_num_iterations);
+
 			int h = org_size[2] / i;
 			int w = org_size[3] / i;
 			h = max(299, h);
@@ -363,38 +373,10 @@ namespace ofxDeepDream {
 			global_num_iterator++;
 
 			if (global_num_iterator == global_num_iterations) {
-				global_num_iterator == 0;
+				global_num_iterator = 0;
 				global_octave_iterator++;
 				global_octave_iterator = global_octave_iterator % global_octave_num;
 			}
-			return x;
-		}
-		torch::Tensor loop_scaling(torch::Tensor& x) {
-
-			torch::Tensor x_org = x;
-			torch::Tensor x_base;
-			auto org_size = x_org.sizes();
-			auto size = x_org.sizes();
-
-			//https://tzmi.hatenablog.com/entry/2020/03/10/230850
-			//https://tzmi.hatenablog.com/entry/2019/12/30/220201
-
-			double i = pow(octave_scale, (global_octave_num - global_octave_iterator - 1));
-			//double i = pow(octave_scale, (global_octave_iterator));
-			//i = pow(octave_scale, global_octave_num - 1) - i + 1.0;
-			int h = org_size[2] / i;
-			int w = org_size[3] / i;
-
-			h = max(299, h);
-			w = max(299, w);
-			x_base = torch::nn::AdaptiveAvgPool2d(torch::nn::AdaptiveAvgPool2dOptions({ h, w })).operator()(x_org);
-			x = x_base;
-			x = dreaming(x);
-			x.set_data(x.data() - x_base);
-			x = x_org + F::interpolate(x, interpOpt.size(std::vector<int64_t>({ org_size[2], org_size[3] })));
-
-			global_octave_iterator++;
-			global_octave_iterator = global_octave_iterator % global_octave_num;
 			return x;
 		}
 
@@ -415,16 +397,14 @@ namespace ofxDeepDream {
 		ofParameterGroup group;
 
 		//octave
-		int octave_num;
 		ofParameter<int> _global_octave_num;
 		int global_octave_num;
 		int global_octave_iterator = 0;
 		
 		//iterator
-		int num_iterations;
-		ofParameter<int> _num_iterations;
-		int global_num_iterations = 10;
+		int global_num_iterations;
 		int global_num_iterator = 0;
+		ofParameter<int> _num_iterations;
 
 		//scale
 		float octave_scale = 1.2;
@@ -433,15 +413,9 @@ namespace ofxDeepDream {
 		double random_scale[6] = { 1.2, 1.4, 1.6, 1.8, 2.0, 2.2 };
 
 		ofParameter<float> norm_str;
-
 		ofParameter<float> lr;
 		ofParameter<bool> isRandomLr = false;
 		double random_lr[6] = { 0.01, 0.009, 0.008, 0.02, 0.03, 0.007 };
-
-		//unuse
-		int limited_tensor_size;
-		ofParameter<int> _limited_tensor_size;
-
 
 		//Torch Parameter
 		c10::ScalarType tensor_datatype = torch::kHalf;

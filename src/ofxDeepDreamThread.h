@@ -19,11 +19,14 @@ namespace ofxDeepDream {
 
     public:
         ofxDeepDreamThread() {
+
             group.setName("ofxDeepDream");
             group.add(deepdream_thread.getParameters());
             group.add(blend_weight.set("blend_weight", 0.1, 0.0, 1.0));
-        }
+            group.add(blend.set("blend", 1.0, 0.0, 1.0));
+            group.add(black.set("black", 0.0, 0.0, 1.0));
 
+        }
         ~ofxDeepDreamThread() {
             stop();
             waitForThread(false, 1000);
@@ -46,20 +49,20 @@ namespace ofxDeepDream {
         void setup(const ofTexture& tex1, const ofTexture& tex2) {
 
             ofTextureData texData = tex1.getTextureData();
-            ofLogVerbose(__FUNCTION__) << "padding_w:"<< padding_w <<" padding_h:"<< padding_h;
+            ofLog(OF_LOG_NOTICE, "textures padding : ( %d , %d )", padding_w, padding_h);
+
             ofFboSettings s;
             s.width = texData.width - padding_w * 2;
             s.height = (texData.height - padding_h * 2) * 2;
             s.textureTarget = texData.textureTarget;
             s.internalformat = texData.glInternalFormat;
-            s.textureTarget = GL_TEXTURE_2D; // Can't use GL_TEXTURE_RECTANGLE_ARB which is default in oF
+            s.textureTarget = GL_TEXTURE_2D;
             s.internalformat = GL_RGBA8;
             s.useDepth = true;
             s.useStencil = true;
             s.maxFilter = GL_LINEAR;
             s.minFilter = GL_LINEAR;
-            s.numSamples = 4; // MSAA enabled. Anti-Alising is much important for VR experience
-
+            s.numSamples = 4;
             mergeFbo.allocate(s);
             drawMergeFbo(tex1, tex2);
 
@@ -80,12 +83,8 @@ namespace ofxDeepDream {
         void setup(const ofTexture& tex) {
 
             try {
+
                 inputTexData = tex.getTextureData();
-
-                if (tex.getWidth()<299 || tex.getHeight() < 299) {
-                    ofLogWarning(__FUNCTION__) << "unexpected size texture.";
-                }
-
                 GLenum format = ofGetGLFormatFromInternal(inputTexData.glInternalFormat);
 
                 numChannel = format == GL_RGB ? 3 : 4;
@@ -99,7 +98,13 @@ namespace ofxDeepDream {
                 glGetTexImage(inputTexData.textureTarget, 0, ofGetGLFormatFromInternal(inputTexData.glInternalFormat), ofGetGLTypeFromInternal(inputTexData.glInternalFormat), 0);
                 glBindTexture(inputTexData.textureTarget, 0);
                 glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-                ofLogNotice(__FUNCTION__) << "texture width:" << inputTexData.width << " height:" << inputTexData.height << " numChannel:" << numChannel;
+
+                if (tex.getWidth() < 299 || tex.getHeight() < 299) {
+                    ofLogWarning(__FUNCTION__, "input texture size : ( %d , %d , %d) is unexpected", inputTexData.width, inputTexData.height, numChannel);
+                }
+                else {
+                    ofLogNotice(__FUNCTION__, "input texture size : ( %d , %d , %d)", inputTexData.width, inputTexData.height, numChannel);
+                }
 
                 pipeBuffer = cv::ogl::Buffer(inputTexData.height, inputTexData.width, CV_8UC(numChannel), pbo);
                 m8U_inputBuffer = pipeBuffer.mapDevice();
@@ -142,15 +147,13 @@ namespace ofxDeepDream {
                 glTexSubImage2D(outputTexData.textureTarget, 0, 0, 0, outputTexData.width, outputTexData.height, ofGetGLFormatFromInternal(outputTexData.glInternalFormat), ofGetGLTypeFromInternal(outputTexData.glInternalFormat), 0);
                 glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
                 glBindTexture(outputTexData.textureTarget, 0);
-                
                 start();
+                isSetup = true;
 
             }
             catch (cv::Exception& e)
             {
-                const char* err_msg = e.what();
-                std::cout << "exception caught: " << err_msg << std::endl;
-                ofLogError(__FUNCTION__) << err_msg;
+                ofLogError(__FUNCTION__) << e.msg << "\n" << e.what();
             }
 
         }
@@ -168,10 +171,8 @@ namespace ofxDeepDream {
         }
 
         void reset() {
-
+            ofLogNotice(__FUNCTION__) << "reset.";
             if (isThreadRunning()) {
-                ofLogNotice(__FUNCTION__) << "reset.";
-
                 mutex.lock();
                 upload_pbo();
                 upload_data();
@@ -183,6 +184,35 @@ namespace ofxDeepDream {
                 download_pbo();
                 mutex.unlock();
             }
+            else {
+                upload_pbo();
+                upload_data();
+                m32FC3_input.copyTo(m32FC3_output);
+                download_data();
+                download_pbo();
+            }
+        }
+
+        void single_process() {
+
+            if (isThreadRunning() || deepdream_thread.isThreadRunning()) {
+                ofLogWarning(__FUNCTION__) << "Please stop thread and try again.";
+                return;
+            }
+
+            deepdream_thread.getParameters().getBool("straddle_scaleing").set(false);
+
+            upload_pbo();
+            download_pbo();
+
+            upload_data();
+            deepdream_thread.dreamer(m32FC3_input, m32FC3_output);
+            download_data();
+
+            upload_pbo();
+            download_pbo();
+
+        
         }
 
         void pauseDeepDreamThread() {
@@ -194,7 +224,6 @@ namespace ofxDeepDream {
                 ofLogWarning(__FUNCTION__) << "Deep dream thread is stop.";
             }
         }
-
         void resumeDeepDreamThread() {
             if (deepdream_thread.isThreadRunning()) {
                 ofLogWarning(__FUNCTION__) << "Deep dream thread is running.";
@@ -236,7 +265,6 @@ namespace ofxDeepDream {
                         m32FC3_input.copyTo(m32FC3_input_cache);
                         m32FC3_tmp.copyTo(m32FC3_output_cache);
                         m32FC3_tmp.copyTo(m32FC3_output);
-
                         cv::cuda::addWeighted(m32FC3_output, blend, m32FC3_input, 1.0 - blend, 0, m32FC3_output);
                     }
                     catch (c10::Error e) { ofLogError(__FUNCTION__) << e.what();}
@@ -248,7 +276,7 @@ namespace ofxDeepDream {
 
                     m32FC3_input.copyTo(m32FC3_output);
                 }
-                m32FC3_output.convertTo(m32FC3_output, m32FC3_output.type(), 1.0 - blackout);
+                m32FC3_output.convertTo(m32FC3_output, m32FC3_output.type(), 1.0 - black);
                 mutex.lock();
                 download_data();
                 mutex.unlock();
@@ -289,10 +317,8 @@ namespace ofxDeepDream {
         }
         void update() {
             if (isThreadRunning()) {
-
                 upload_pbo();
                 download_pbo();
-
             }
         }
 
@@ -350,16 +376,15 @@ namespace ofxDeepDream {
 
         }
 
-        void setblend(float val) {
-            blend = val;
-        }
-        void setblack(float val) {
-            blackout = val;
-        }
         void setpadding(float w, float h) { padding_w = w; padding_h = h; }
+
+        bool isSetupTexture() {
+            return isSetup;
+        }
 
     protected:
 
+        bool isSetup = false;
         void drawMergeFbo(const ofTexture& tex1, const ofTexture& tex2) {
 
             ofDisableAlphaBlending();
@@ -427,16 +452,15 @@ namespace ofxDeepDream {
         float padding_w = 80;
         float padding_h = 40;
 
-        float blackout = 0.3;
-        float blend = 0;
+        ofParameterGroup group;
+        ofParameter<float> blend_weight;
+        ofParameter<float> black;
+        ofParameter<float> blend;
 
         ofMutex mutex;
         std::condition_variable condition;
         int threadFrameNum = 0;
         int numChannel = 3;
-
-        ofParameterGroup group;
-        ofParameter<float> blend_weight;
 
         SpynetOpticalFlowModule spynet_module;
         DeepDreamModuleThread deepdream_thread;
