@@ -18,19 +18,19 @@ Setup
 -----
 LibTorch
 1. Download LibTorch from https://pytorch.org/get-started/locally/
-2. Unzip the downloaded file and copy the contents of the "include" and "lib" directories to the following location.
-- libtorch-win-shared-with-deps-1.11.0+cu113/include >> /libs/libtorch/win/include/vs/x64/Release
-- libtorch-win-shared-with-deps-1.11.0+cu113/lib >> /libs/libtorch/win/lib/vs/x64/Release
+2. Unzip the downloaded file and copy the contents of the `include` and `lib` directories to the following location.
+- libtorch-win-shared-with-deps-1.11.0+cu113/include >> /libs/win/include/vs/x64/Release
+- libtorch-win-shared-with-deps-1.11.0+cu113/lib >> /libs/win/lib/vs/x64/Release
 3. Download CUDA from https://developer.nvidia.com/cuda-toolkit-archive/
 
 OpenCV
 1. Build openCV with extra CUDA module https://github.com/opencv/opencv_contrib
-2. Edit addon_config.mk to change OpenCV paths to your environment.
+2. Edit `addon_config.mk` to change OpenCV paths to your environment.
 
 You don't have to follow the above method, just set up your project to use OpenCV and Libtorch.
 
 Models
-1. Download models from [this drive](https://drive.google.com/drive/folders/1UvaghH4AWgQjkSvTMXK-AkwkVBBJdGyZ?usp=sharing) or run /python/model_export.py in Pytorch.
-2. Copy Inception_v3.pt and spynet.pt to the /model directory.
+1. Download models from [this drive](https://drive.google.com/drive/folders/1UvaghH4AWgQjkSvTMXK-AkwkVBBJdGyZ?usp=sharing) or run `/python/model_export.py` in Pytorch.
+2. Copy `Inception_v3.pt` and `spynet.pt` to the `model` directory.
 
 
